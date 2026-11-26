@@ -1,42 +1,48 @@
 
-name: Build 7A4 FF Hub APK
+name: 7A4 FF Hub - Android Build
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
       - master
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build Android APK
-    runs-on: ubuntu-latest
+    name: Build 7A4 FF Hub
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Locate and Extract Project
+      - name: Extract Project
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          if [ -d "7A4-FF-Hub-All-In-One" ]; then
+          if [ -f "7A4-FF-Hub-single-flat-folder.zip" ]; then
+            mkdir -p /tmp/project
+            unzip -q "7A4-FF-Hub-single-flat-folder.zip" -d /tmp/project
+            SRC="/tmp/project/7A4-FF-Hub-All-In-One"
+          elif [ -d "7A4-FF-Hub-All-In-One" ]; then
             SRC="7A4-FF-Hub-All-In-One"
-          elif [ -f "7A4-FF-Hub-single-flat-folder.zip" ]; then
-            mkdir -p extracted
-            unzip -oq "7A4-FF-Hub-single-flat-folder.zip" -d extracted
-            SRC="extracted/7A4-FF-Hub-All-In-One"
+          elif [ -f "app_build.gradle" ]; then
+            SRC="."
           else
-            echo "Project folder or ZIP not found!"
+            echo "ERROR: Cannot locate project source"
             exit 1
           fi
 
-          test -d "$SRC"
+          test -f "$SRC/MainActivity.java"
+          test -f "$SRC/OverlayService.java"
+          test -f "$SRC/app_build.gradle"
+          test -f "$SRC/AndroidManifest.xml"
+          test -f "$SRC/main.cpp"
 
           mkdir -p app/src/main/java/com/hub7a4/ffmenu
           mkdir -p app/src/main/cpp
@@ -54,35 +60,38 @@ jobs:
           cp "$SRC/logo.png" app/src/main/assets/logo.png
           cp "$SRC/drawable_logo.png" app/src/main/res/drawable/logo.png
 
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            mkdir -p "app/src/main/res/mipmap-$density"
-            cp "$SRC/mipmap_${density}_ic_launcher.png" \
-              "app/src/main/res/mipmap-$density/ic_launcher.png"
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p "app/src/main/res/mipmap-$d"
+            cp "$SRC/mipmap_${d}_ic_launcher.png" \
+              "app/src/main/res/mipmap-$d/ic_launcher.png"
           done
 
-          cp "$SRC"/*.h app/src/main/cpp/
           cp "$SRC"/*.cpp app/src/main/cpp/
-          cp "$SRC/CMakeLists.txt" app/src/main/cpp/
+          cp "$SRC"/*.h app/src/main/cpp/
 
-          echo "SRC=$SRC" >> "$GITHUB_ENV"
+          echo "Project source prepared"
 
       - name: Download Dear ImGui
         run: |
-          set -e
+          set -euxo pipefail
 
           git clone --depth 1 \
             --branch v1.91.5 \
             https://github.com/ocornut/imgui.git \
             /tmp/imgui
 
-          cp /tmp/imgui/*.cpp app/src/main/cpp/
-          cp /tmp/imgui/*.h app/src/main/cpp/
+          cp /tmp/imgui/imgui.cpp app/src/main/cpp/
+          cp /tmp/imgui/imgui_draw.cpp app/src/main/cpp/
+          cp /tmp/imgui/imgui_tables.cpp app/src/main/cpp/
+          cp /tmp/imgui/imgui_widgets.cpp app/src/main/cpp/
+          cp /tmp/imgui/imgui.h app/src/main/cpp/
+          cp /tmp/imgui/imconfig.h app/src/main/cpp/
+          cp /tmp/imgui/imgui_internal.h app/src/main/cpp/
+          cp /tmp/imgui/imstb_*.h app/src/main/cpp/
 
-          cp /tmp/imgui/backends/imgui_impl_android.* \
-            app/src/main/cpp/
-
-          cp /tmp/imgui/backends/imgui_impl_opengl3.* \
-            app/src/main/cpp/
+          cp /tmp/imgui/backends/imgui_impl_opengl3.cpp app/src/main/cpp/
+          cp /tmp/imgui/backends/imgui_impl_opengl3.h app/src/main/cpp/
+          cp /tmp/imgui/backends/imgui_impl_opengl3_loader.h app/src/main/cpp/
 
       - name: Download stb_image
         run: |
@@ -90,23 +99,21 @@ jobs:
             https://raw.githubusercontent.com/nothings/stb/master/stb_image.h \
             -o app/src/main/cpp/stb_image.h
 
-      - name: Fix Native CMake Sources
+      - name: Configure CMake
         run: |
           cat > app/src/main/cpp/CMakeLists.txt <<'EOF'
           cmake_minimum_required(VERSION 3.22.1)
+
           project(hub7a4)
 
           add_library(hub7a4 SHARED
               main.cpp
               Menu.cpp
               MemoryEngine.cpp
-
               imgui.cpp
               imgui_draw.cpp
               imgui_tables.cpp
               imgui_widgets.cpp
-
-              imgui_impl_android.cpp
               imgui_impl_opengl3.cpp
           )
 
@@ -116,6 +123,10 @@ jobs:
 
           target_compile_features(hub7a4 PRIVATE cxx_std_17)
 
+          target_compile_options(hub7a4 PRIVATE
+              -fvisibility=hidden
+          )
+
           target_link_libraries(hub7a4
               android
               log
@@ -124,7 +135,7 @@ jobs:
           )
           EOF
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -133,7 +144,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK Components
+      - name: Install SDK, NDK and CMake
         run: |
           sdkmanager --install \
             "platform-tools" \
@@ -147,18 +158,19 @@ jobs:
         with:
           gradle-version: '8.2.1'
 
-      - name: Generate Gradle Wrapper
+      - name: Create Gradle Wrapper
         run: |
           gradle wrapper --gradle-version 8.2.1
           chmod +x gradlew
 
+      - name: Validate Gradle
+        run: ./gradlew tasks --no-daemon
+
       - name: Build Debug APK
         run: |
-          ./gradlew assembleDebug --no-daemon
-
-      - name: Build Release APK
-        run: |
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -167,20 +179,16 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+      - name: Build Release APK
+        run: |
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace
+
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: 7A4-FF-Hub-Release
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
-
-      - name: Build Summary
-        if: success()
-        run: |
-          echo "## 7A4 FF Hub Build Successful" >> $GITHUB_STEP_SUMMARY
-          echo "- Debug APK: Ready" >> $GITHUB_STEP_SUMMARY
-          echo "- Release APK: Ready" >> $GITHUB_STEP_SUMMARY
-          echo "- Architecture: arm64-v8a" >> $GITHUB_STEP_SUMMARY
-          echo "- Android SDK: 34" >> $GITHUB_STEP_SUMMARY
-          echo "- Java: 17" >> $GITHUB_STEP_SUMMARY
           
