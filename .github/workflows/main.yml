@@ -12,40 +12,170 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Arrange Android Project Structure
+      - name: Locate Project Files & Build Structure
         run: |
+          set -e
+          ROOT_SRC="."
           if [ -d "7A4-FF-Hub-All-In-One" ]; then
-            SRC_DIR="7A4-FF-Hub-All-In-One"
-          else
-            SRC_DIR="."
+            ROOT_SRC="7A4-FF-Hub-All-In-One"
+          elif [ -d "7A4-FF-Hub" ]; then
+            ROOT_SRC="7A4-FF-Hub"
           fi
 
-          mkdir -p .github/workflows app/src/main/assets app/src/main/res/drawable app/src/main/cpp app/src/main/java/com/hub7a4/ffmenu
-          if [ -f "$SRC_DIR/build-apk.yml" ]; then
-            cp "$SRC_DIR/build-apk.yml" .github/workflows/build-apk.yml
+          mkdir -p app/src/main/assets app/src/main/res/drawable app/src/main/cpp app/src/main/java/com/hub7a4/ffmenu
+
+          if [ -f "$ROOT_SRC/settings.gradle" ]; then
+            cp -f "$ROOT_SRC/settings.gradle" settings.gradle
+          else
+            cat << 'EOF' > settings.gradle
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "7A4-FF-Hub"
+include ':app'
+EOF
           fi
-          cp "$SRC_DIR/settings.gradle" settings.gradle
-          cp "$SRC_DIR/build.gradle" build.gradle
-          cp "$SRC_DIR/app_build.gradle" app/build.gradle
-          cp "$SRC_DIR/AndroidManifest.xml" app/src/main/AndroidManifest.xml
-          cp "$SRC_DIR/logo.png" app/src/main/assets/logo.png
-          cp "$SRC_DIR/drawable_logo.png" app/src/main/res/drawable/logo.png
-          for d in mipmap_mdpi mipmap_hdpi mipmap_xhdpi mipmap_xxhdpi mipmap_xxxhdpi; do
-            out_d="app/src/main/res/${d/_/-}"
-            mkdir -p "$out_d"
-            cp "$SRC_DIR/${d}_ic_launcher.png" "$out_d/ic_launcher.png"
+
+          if [ -f "$ROOT_SRC/build.gradle" ]; then
+            cp -f "$ROOT_SRC/build.gradle" build.gradle
+          else
+            cat << 'EOF' > build.gradle
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+}
+EOF
+          fi
+
+          if [ -f "$ROOT_SRC/app_build.gradle" ]; then
+            cp -f "$ROOT_SRC/app_build.gradle" app/build.gradle
+          elif [ -f "$ROOT_SRC/app/build.gradle" ]; then
+            cp -f "$ROOT_SRC/app/build.gradle" app/build.gradle
+          else
+            cat << 'EOF' > app/build.gradle
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.hub7a4.ffmenu'
+    compileSdk 34
+    ndkVersion '26.1.10909125'
+
+    defaultConfig {
+        applicationId "com.hub7a4.ffmenu"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17 -O3 -fvisibility=hidden"
+                arguments "-DANDROID_STL=c++_static"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+        debug {
+            jniDebuggable true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}
+EOF
+          fi
+
+          if [ -f "$ROOT_SRC/AndroidManifest.xml" ]; then
+            cp -f "$ROOT_SRC/AndroidManifest.xml" app/src/main/AndroidManifest.xml
+          elif [ -f "$ROOT_SRC/app/src/main/AndroidManifest.xml" ]; then
+            cp -f "$ROOT_SRC/app/src/main/AndroidManifest.xml" app/src/main/AndroidManifest.xml
+          fi
+
+          LOGO_FILE=""
+          for candidate in "$ROOT_SRC/logo.png" "$ROOT_SRC/7864.png" "$ROOT_SRC/drawable_logo.png" "$ROOT_SRC/app/src/main/assets/logo.png" "$ROOT_SRC/app/src/main/res/drawable/logo.png"; do
+            if [ -f "$candidate" ]; then
+              LOGO_FILE="$candidate"
+              break
+            fi
           done
-          cp "$SRC_DIR/MainActivity.java" app/src/main/java/com/hub7a4/ffmenu/MainActivity.java
-          cp "$SRC_DIR/OverlayService.java" app/src/main/java/com/hub7a4/ffmenu/OverlayService.java
-          cp "$SRC_DIR/CMakeLists.txt" "$SRC_DIR/main.cpp" "$SRC_DIR/Menu.h" "$SRC_DIR/Menu.cpp" "$SRC_DIR/MemoryEngine.h" "$SRC_DIR/MemoryEngine.cpp" "$SRC_DIR/SDK.h" "$SRC_DIR/TextureLoader.h" app/src/main/cpp/
+
+          if [ -n "$LOGO_FILE" ]; then
+            cp -f "$LOGO_FILE" app/src/main/assets/logo.png
+            cp -f "$LOGO_FILE" app/src/main/res/drawable/logo.png
+            for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+              mkdir -p "app/src/main/res/$d"
+              cp -f "$LOGO_FILE" "app/src/main/res/$d/ic_launcher.png"
+            done
+          fi
+
+          for d in mipmap_mdpi mipmap_hdpi mipmap_xhdpi mipmap_xxhdpi mipmap_xxxhdpi; do
+            icon_src="$ROOT_SRC/${d}_ic_launcher.png"
+            if [ -f "$icon_src" ]; then
+              out_d="app/src/main/res/${d/_/-}"
+              mkdir -p "$out_d"
+              cp -f "$icon_src" "$out_d/ic_launcher.png"
+            fi
+          done
+
+          for java_file in MainActivity.java OverlayService.java; do
+            if [ -f "$ROOT_SRC/$java_file" ]; then
+              cp -f "$ROOT_SRC/$java_file" "app/src/main/java/com/hub7a4/ffmenu/$java_file"
+            elif [ -f "$ROOT_SRC/app/src/main/java/com/hub7a4/ffmenu/$java_file" ]; then
+              cp -f "$ROOT_SRC/app/src/main/java/com/hub7a4/ffmenu/$java_file" "app/src/main/java/com/hub7a4/ffmenu/$java_file"
+            fi
+          done
+
+          for cpp_file in CMakeLists.txt main.cpp Menu.h Menu.cpp MemoryEngine.h MemoryEngine.cpp SDK.h TextureLoader.h; do
+            if [ -f "$ROOT_SRC/$cpp_file" ]; then
+              cp -f "$ROOT_SRC/$cpp_file" "app/src/main/cpp/$cpp_file"
+            elif [ -f "$ROOT_SRC/app/src/main/cpp/$cpp_file" ]; then
+              cp -f "$ROOT_SRC/app/src/main/cpp/$cpp_file" "app/src/main/cpp/$cpp_file"
+            fi
+          done
 
       - name: Fetch Dear ImGui & stb_image
         run: |
+          set -e
+          mkdir -p app/src/main/cpp
           git clone --depth 1 --branch v1.91.5 https://github.com/ocornut/imgui.git /tmp/imgui
-          cp /tmp/imgui/*.cpp /tmp/imgui/*.h app/src/main/cpp/
-          cp /tmp/imgui/backends/imgui_impl_android.* app/src/main/cpp/
-          cp /tmp/imgui/backends/imgui_impl_opengl3.* app/src/main/cpp/
-          curl -sL https://raw.githubusercontent.com/nothings/stb/master/stb_image.h -o app/src/main/cpp/stb_image.h
+          cp -f /tmp/imgui/*.cpp /tmp/imgui/*.h app/src/main/cpp/
+          cp -f /tmp/imgui/backends/imgui_impl_android.* app/src/main/cpp/
+          cp -f /tmp/imgui/backends/imgui_impl_opengl3.* app/src/main/cpp/
+          curl -fsSL https://raw.githubusercontent.com/nothings/stb/master/stb_image.h -o app/src/main/cpp/stb_image.h
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -58,8 +188,9 @@ jobs:
         with:
           packages: 'platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125 cmake;3.22.1'
 
-      - name: Generate Gradle Wrapper & Build APKs
+      - name: Build APKs
         run: |
+          set -e
           gradle wrapper --gradle-version 8.5
           chmod +x gradlew
           ./gradlew assembleDebug assembleRelease --no-daemon
