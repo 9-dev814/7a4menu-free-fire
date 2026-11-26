@@ -14,9 +14,16 @@ jobs:
 
       - name: Arrange Android Project Structure
         run: |
-          SRC_DIR="7A4-FF-Hub-All-In-One"
+          if [ -d "7A4-FF-Hub-All-In-One" ]; then
+            SRC_DIR="7A4-FF-Hub-All-In-One"
+          else
+            SRC_DIR="."
+          fi
+
           mkdir -p .github/workflows app/src/main/assets app/src/main/res/drawable app/src/main/cpp app/src/main/java/com/hub7a4/ffmenu
-          cp "$SRC_DIR/build-apk.yml" .github/workflows/build-apk.yml
+          if [ -f "$SRC_DIR/build-apk.yml" ]; then
+            cp "$SRC_DIR/build-apk.yml" .github/workflows/build-apk.yml
+          fi
           cp "$SRC_DIR/settings.gradle" settings.gradle
           cp "$SRC_DIR/build.gradle" build.gradle
           cp "$SRC_DIR/app_build.gradle" app/build.gradle
